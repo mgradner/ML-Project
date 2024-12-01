@@ -168,38 +168,106 @@ def main():
     # Initialize detector
     detector = AmniotiFluidDetector()
     
-    # Create train/validation/test splits
-    all_images = os.listdir(data_dir)
-    train_imgs, test_imgs = train_test_split(all_images, test_size=0.2, random_state=42)
-    train_imgs, val_imgs = train_test_split(train_imgs, test_size=0.2, random_state=42)
+    # Get all images and their labels from filenames
+    all_images = []
+    labels = []
+    for filename in os.listdir(data_dir):
+        if filename.endswith(('.png', '.jpg', '.jpeg')):
+            # Extract label from filename
+            if '_high' in filename:
+                label = 2  # high fluid
+            elif '_low' in filename:
+                label = 1  # low fluid
+            elif '_normal' in filename:
+                label = 0  # normal fluid
+            else:
+                continue  # Skip files without labels
+                
+            all_images.append(filename)
+            labels.append(label)
     
-    # Assuming you have ground truth labels in a format like:
-    # {"image_name.jpg": label}, where label is 0, 1, or 2
-    ground_truth = {}  # You'll need to load this from somewhere
+    print(f"Found {len(all_images)} labeled images")
     
-    # Lists to store predictions and true labels
+    # Create train/validation/test splits while preserving label distribution
+    X_train, X_temp, y_train, y_temp = train_test_split(
+        all_images, labels, test_size=0.2, random_state=42, stratify=labels
+    )
+    X_val, X_test, y_val, y_test = train_test_split(
+        X_temp, y_temp, test_size=0.5, random_state=42, stratify=y_temp
+    )
+    
+    # Training data preparation
+    print("Preparing training data...")
+    X_train_data = []
+    for image_name in X_train:
+        image_path = os.path.join(data_dir, image_name)
+        _, cnn_input = detector.load_and_preprocess(image_path)
+        X_train_data.append(cnn_input)
+    
+    X_train_data = np.array(X_train_data)
+    y_train = np.array(y_train)
+    
+    # Validation data preparation
+    print("Preparing validation data...")
+    X_val_data = []
+    for image_name in X_val:
+        image_path = os.path.join(data_dir, image_name)
+        _, cnn_input = detector.load_and_preprocess(image_path)
+        X_val_data.append(cnn_input)
+    
+    X_val_data = np.array(X_val_data)
+    y_val = np.array(y_val)
+    
+    # Train the CNN model
+    print("Training CNN model...")
+    history = detector.cnn_model.fit(
+        X_train_data,
+        y_train,
+        validation_data=(X_val_data, y_val),
+        epochs=50,
+        batch_size=32,
+        verbose=1
+    )
+    
+    # Plot training history
+    plt.figure(figsize=(12, 4))
+    
+    plt.subplot(1, 2, 1)
+    plt.plot(history.history['loss'], label='Training Loss')
+    plt.plot(history.history['val_loss'], label='Validation Loss')
+    plt.title('Model Loss')
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.legend()
+    
+    plt.subplot(1, 2, 2)
+    plt.plot(history.history['accuracy'], label='Training Accuracy')
+    plt.plot(history.history['val_accuracy'], label='Validation Accuracy')
+    plt.title('Model Accuracy')
+    plt.xlabel('Epoch')
+    plt.ylabel('Accuracy')
+    plt.legend()
+    
+    plt.tight_layout()
+    plt.show()
+    
+    # Test evaluation
+    print("Evaluating model on test set...")
     y_true = []
     y_pred = []
     
-    # Process images and collect predictions
-    for image_name in train_imgs:
+    # Create results directory if it doesn't exist
+    results_dir = "./test_results"
+    if not os.path.exists(results_dir):
+        os.makedirs(results_dir)
+    
+    # Process all test images without displaying them
+    for image_name, true_label in zip(X_test, y_test):
         image_path = os.path.join(data_dir, image_name)
-        
-        # Get ground truth label
-        # true_label = ground_truth.get(image_name)
-        # if true_label is None:
-        #     continue
-            
-        # Get predictions
         results = detector.ensemble_prediction(image_path)
-        # pred_label = results['cnn_prediction']
-        
-        # Store true and predicted labels
-        # y_true.append(true_label)
-        # y_pred.append(pred_label)
-        
-        # Plot results
-        detector.plot_all_results(image_path, results)
+        pred_label = results['cnn_prediction']
+        y_true.append(true_label)
+        y_pred.append(pred_label)
     
     # Calculate and display metrics
     metrics, cm = detector.evaluate_predictions(y_true, y_pred)
@@ -208,8 +276,48 @@ def main():
     for metric, value in metrics.items():
         print(f"{metric.capitalize()}: {value:.3f}")
     
-    # Plot confusion matrix
-    detector.plot_confusion_matrix(cm)
+    # Save metrics to a text file
+    with open(os.path.join(results_dir, "metrics.txt"), "w") as f:
+        f.write("Performance Metrics:\n")
+        for metric, value in metrics.items():
+            f.write(f"{metric.capitalize()}: {value:.3f}\n")
+    
+    # Plot and save confusion matrix
+    plt.figure(figsize=(8, 6))
+    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues')
+    plt.title('Confusion Matrix')
+    plt.ylabel('True Label')
+    plt.xlabel('Predicted Label')
+    plt.savefig(os.path.join(results_dir, "confusion_matrix.png"))
+    plt.close()
+    
+    # Save random examples
+    num_examples = 5  # Adjust this number as needed
+    random_indices = np.random.choice(len(X_test), num_examples, replace=False)
+    
+    print(f"\nSaving {num_examples} random example predictions...")
+    with open(os.path.join(results_dir, "example_predictions.txt"), "w") as f:
+        for idx in random_indices:
+            image_path = os.path.join(data_dir, X_test[idx])
+            results = detector.ensemble_prediction(image_path)
+            
+            # Save the visualization
+            plt.figure(figsize=(15, 5))
+            detector.plot_all_results(image_path, results)
+            example_filename = f"example_{idx}.png"
+            plt.savefig(os.path.join(results_dir, example_filename))
+            plt.close()
+            
+            # Log the prediction details
+            prediction_text = (
+                f"File: {X_test[idx]}\n"
+                f"True label: {['Normal', 'Low', 'High'][y_test[idx]]}\n"
+                f"Predicted: {['Normal', 'Low', 'High'][results['cnn_prediction']]}\n\n"
+            )
+            f.write(prediction_text)
+            print(prediction_text)
+
+    print(f"Results saved in {results_dir}/")
 
 if __name__ == "__main__":
     main()
