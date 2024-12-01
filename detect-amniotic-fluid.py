@@ -12,6 +12,7 @@ from scipy.cluster.hierarchy import dendrogram, linkage
 import os
 from sklearn.metrics import precision_score, recall_score, f1_score, accuracy_score, confusion_matrix
 import seaborn as sns
+from sklearn.utils.class_weight import compute_class_weight
 
 class AmniotiFluidDetector:
     def __init__(self, img_height=256, img_width=256):
@@ -25,15 +26,19 @@ class AmniotiFluidDetector:
     def build_cnn(self):
         model = tf.keras.Sequential([
             Conv2D(32, 3, activation='relu', input_shape=(self.img_height, self.img_width, 1)),
+            Dropout(0.2),
             MaxPooling2D(),
             Conv2D(64, 3, activation='relu'),
+            Dropout(0.2),
             MaxPooling2D(),
             Conv2D(64, 3, activation='relu'),
+            Dropout(0.2),
             Flatten(),
             Dense(64, activation='relu'),
-            Dense(3, activation='softmax')  # 3 classes: normal, low, high fluid
+            Dropout(0.5),
+            Dense(3, activation='softmax')
         ])
-        model.compile(optimizer='adam',
+        model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.001),
                      loss='sparse_categorical_crossentropy',
                      metrics=['accuracy'])
         return model
@@ -188,6 +193,16 @@ def main():
     
     print(f"Found {len(all_images)} labeled images")
     
+    # After loading labels, add this:
+    label_counts = {
+        'normal': labels.count(0),
+        'low': labels.count(1),
+        'high': labels.count(2)
+    }
+    print("\nLabel distribution:")
+    for label, count in label_counts.items():
+        print(f"{label}: {count} images ({count/len(labels)*100:.1f}%)")
+    
     # Create train/validation/test splits while preserving label distribution
     X_train, X_temp, y_train, y_temp = train_test_split(
         all_images, labels, test_size=0.2, random_state=42, stratify=labels
@@ -218,6 +233,15 @@ def main():
     X_val_data = np.array(X_val_data)
     y_val = np.array(y_val)
     
+    # Calculate class weights
+    class_weights = compute_class_weight(
+        class_weight='balanced',
+        classes=np.unique(y_train),
+        y=y_train
+    )
+    class_weight_dict = dict(enumerate(class_weights))
+    print("\nClass weights:", class_weight_dict)
+    
     # Train the CNN model
     print("Training CNN model...")
     history = detector.cnn_model.fit(
@@ -226,7 +250,21 @@ def main():
         validation_data=(X_val_data, y_val),
         epochs=50,
         batch_size=32,
-        verbose=1
+        verbose=1,
+        class_weight=class_weight_dict,  # Add class weights
+        callbacks=[
+            tf.keras.callbacks.EarlyStopping(
+                monitor='val_loss',
+                patience=5,
+                restore_best_weights=True
+            ),
+            tf.keras.callbacks.ReduceLROnPlateau(
+                monitor='val_loss',
+                factor=0.2,
+                patience=3,
+                min_lr=0.00001
+            )
+        ]
     )
     
     # Plot training history
