@@ -10,45 +10,75 @@ from sklearn.metrics import precision_score, recall_score, f1_score, accuracy_sc
 import seaborn as sns
 
 class AmniotiFluidDetector:
+    """
+    This class is responsible for detecting amniotic fluid levels in ultrasound images.
+    It uses a Convolutional Neural Network (CNN) to classify images into three categories:
+    Normal, Low, or High fluid levels.
+    """
     def __init__(self, img_height=256, img_width=256):
+        # Set the dimensions for image resizing
         self.img_height = img_height
         self.img_width = img_width
+        # Initialize the CNN model
         self.cnn_model = self.build_cnn()
         
     def build_cnn(self):
+        """
+        Constructs the CNN model which will learn to identify patterns in the images.
+        The model consists of several layers that process the image data.
+        """
         model = tf.keras.Sequential([
+            # First layer: Detects basic features in the image
             Conv2D(32, 3, activation='relu', input_shape=(self.img_height, self.img_width, 1)),
             MaxPooling2D(),
+            # Second layer: Detects more complex features
             Conv2D(64, 3, activation='relu'),
             MaxPooling2D(),
+            # Flatten the data to feed into the final decision layers
             Flatten(),
+            # Dense layer: Makes decisions based on the features
             Dense(64, activation='relu'),
+            # Output layer: Classifies the image into one of three categories
             Dense(3, activation='softmax')
         ])
+        # Compile the model with an optimizer and loss function
         model.compile(optimizer='adam',
                      loss='sparse_categorical_crossentropy',
                      metrics=['accuracy'])
         return model
 
     def load_and_preprocess(self, image_path):
+        """
+        Loads an image from the given path and prepares it for the CNN.
+        The image is converted to grayscale, resized, and normalized.
+        """
         img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
         img = cv2.resize(img, (self.img_width, self.img_height))
-        img = img / 255.0
+        img = img / 255.0  # Normalize pixel values to be between 0 and 1
         return np.expand_dims(img, axis=-1)
 
 def main():
+    """
+    Main function to execute the detection process:
+    1. Load and preprocess images
+    2. Train the CNN model
+    3. Evaluate the model's performance
+    4. Save the results
+    """
     print("Starting Amniotic Fluid Detection System")
     
-    # Setup
+    # Define the directory containing the image data
     data_dir = "./data"
+    # Create an instance of the detector
     detector = AmniotiFluidDetector()
     
-    # Load data
+    # Load images and their corresponding labels
     print("\nLoading and preprocessing images...")
     all_images = []
     labels = []
     for filename in os.listdir(data_dir):
         if filename.endswith(('.png', '.jpg', '.jpeg')):
+            # Determine the label based on the filename
             if '_high' in filename:
                 label = 2
             elif '_low' in filename:
@@ -60,39 +90,39 @@ def main():
             all_images.append(filename)
             labels.append(label)
     
-    # Data distribution
+    # Display the distribution of the dataset
     print("\nDataset distribution:")
     for label, name in enumerate(['Normal', 'Low', 'High']):
         count = labels.count(label)
         print(f"{name}: {count} images ({count/len(labels)*100:.1f}%)")
     
-    # Split data
+    # Split the data into training and testing sets
     X_train, X_test, y_train, y_test = train_test_split(
         all_images, labels, test_size=0.2, random_state=42, stratify=labels
     )
     
-    # Prepare training data
+    # Prepare the training data
     print("\nPreparing training data...")
     X_train_data = [detector.load_and_preprocess(os.path.join(data_dir, img)) for img in X_train]
     X_train_data = np.array(X_train_data)
     y_train = np.array(y_train)
     
-    # Train model
+    # Train the CNN model
     print("\nTraining model...")
     history = detector.cnn_model.fit(
         X_train_data, y_train,
-        epochs=10,
-        batch_size=32,
-        validation_split=0.2
+        epochs=10,  # Number of complete passes through the training data
+        batch_size=32,  # Number of samples per gradient update
+        validation_split=0.2  # Fraction of training data to use for validation
     )
     
-    # Evaluate
+    # Evaluate the model on the test data
     print("\nEvaluating model...")
     results_dir = "./test_results"
     os.makedirs(results_dir, exist_ok=True)
     
-    y_true = []
-    y_pred = []
+    y_true = []  # True labels
+    y_pred = []  # Predicted labels
     
     # Create figure for sample predictions
     plt.figure(figsize=(15, 10))
@@ -161,7 +191,7 @@ def main():
         'f1': f1_score(y_true, y_pred, average='weighted')
     }
     
-    # Save results
+    # Save the results to a file
     print("\nSaving results...")
     with open(os.path.join(results_dir, 'metrics.txt'), 'w') as f:
         for metric, value in metrics.items():
@@ -169,7 +199,7 @@ def main():
             print(line)
             f.write(line + '\n')
     
-    # Plot and save confusion matrix
+    # Create and save a confusion matrix
     cm = confusion_matrix(y_true, y_pred)
     plt.figure(figsize=(8, 6))
     sns.heatmap(cm, annot=True, fmt='d', cmap='Blues')
@@ -204,5 +234,6 @@ def main():
     
     print(f"\nResults saved in {results_dir}/")
 
+# Execute the main function if this script is run directly
 if __name__ == "__main__":
     main()
